@@ -313,6 +313,9 @@ body{font-family:'DM Sans','Apple Color Emoji','Segoe UI Emoji','Noto Color Emoj
             <button class="btn btn-g" style="width:100%;justify-content:center;margin-top:12px;padding:11px;" onclick="sendInd()">
               <i class="ti ti-brand-whatsapp"></i> Abrir en WhatsApp
             </button>
+            <button class="btn btn-outline" style="width:100%;justify-content:center;margin-top:8px;padding:11px;" onclick="scheduleCurrentMessage()">
+              <i class="ti ti-clock"></i> Programar mensaje
+            </button>
           </div>
         </div>
       </div>
@@ -581,6 +584,8 @@ let templates = load('wam_templates',null) || [
 let history = load('wam_history',[]);
 let customVars = load('wam_cvars',[]);
 let totalSent = load('wam_sent',0);
+let whatsappWindow = null;
+let scheduledMessages = [];
 let nextId = load('wam_nextid',100);
 
 function persist(){
@@ -676,6 +681,72 @@ function insertVar(targetId,v){
   ta.dispatchEvent(new Event('input'));
 }
 
+
+// ═══════════════════════════════
+//  WHATSAPP WINDOW MANAGER
+// ═══════════════════════════════
+
+
+function openWhatsApp(phone, message=''){
+
+  const cleanPhone = String(phone).replace(/\D/g,'');
+
+  const url =
+    'https://web.whatsapp.com/send?phone=' +
+    cleanPhone +
+    '&text=' +
+    encodeURIComponent(message);
+
+  // Siempre abre con la URL directamente y el mismo nombre de ventana.
+  // El navegador reutiliza la pestaña si ya existe con ese nombre,
+  // sin importar si la variable whatsappWindow se perdió al recargar.
+  whatsappWindow = window.open(url, 'WhatsAppWindow');
+
+  if(whatsappWindow){
+    whatsappWindow.focus();
+  }
+}
+
+
+function scheduleMessage(phone,message,dateTime){
+
+  const now = new Date().getTime();
+  const target = new Date(dateTime).getTime();
+
+  const delay = target - now;
+
+  if(delay <= 0){
+    toast('La fecha debe ser futura','error');
+    return;
+  }
+
+  const scheduleId = Date.now();
+
+  scheduledMessages.push({
+    id:scheduleId,
+    phone,
+    message,
+    dateTime,
+    status:'pending'
+  });
+
+  localStorage.setItem(
+    'wam_scheduled',
+    JSON.stringify(scheduledMessages)
+  );
+
+  toast('Mensaje programado');
+
+  setTimeout(() => {
+
+    openWhatsApp(phone,message);
+
+    toast('Mensaje programado abierto');
+
+  }, delay);
+}
+
+
 // ═══════════════════════════════
 //  INDIVIDUAL
 // ═══════════════════════════════
@@ -754,14 +825,27 @@ function renderIndPreview(){
 }
 
 function sendInd(){
+
   const c=contacts.find(x=>x.id===indContactId);
   const msg=document.getElementById('ind-msg')?.value.trim()||'';
-  if(!c){toast('Selecciona un contacto','error');return;}
-  if(!msg){toast('Escribe o selecciona un mensaje','error');return;}
+
+  if(!c){
+    toast('Selecciona un contacto','error');
+    return;
+  }
+
+  if(!msg){
+    toast('Escribe o selecciona un mensaje','error');
+    return;
+  }
+
   const text=personalize(msg,c);
-  window.open('https://wa.me/'+c.phone+'?text='+encodeURIComponent(text),'_blank');
+
+  openWhatsApp(c.phone,text);
+
   addHistory(c,msg,text,'individual');
-  toast('Abriendo WhatsApp &#10003;');
+
+  toast('WhatsApp abierto correctamente');
 }
 
 // ═══════════════════════════════
@@ -899,13 +983,16 @@ function renderSeqCurrent(){
 }
 
 function seqOpenWA(){
+
   const c=seqQueue[seqIdx];
   const t=templates.find(x=>x.id===seqTplId);
   const msg=t?personalize(t.body,c):'';
-  window.open('https://wa.me/'+c.phone+'?text='+encodeURIComponent(msg),'_blank');
-  // show confirmation
+
+  openWhatsApp(c.phone,msg);
+
   document.getElementById('seq-confirm-wrap').style.display='block';
   document.getElementById('seq-confirm-name').textContent=c.name;
+
   seqWaitingConfirm=true;
 }
 
@@ -1291,6 +1378,36 @@ updateBadges();
 renderIndividual();
 // init seq sel with all contacts
 seqSelIds=new Set(contacts.map(c=>c.id));
+
+function scheduleCurrentMessage(){
+
+  const c = contacts.find(x => x.id === indContactId);
+
+  if(!c){
+    toast('Selecciona contacto','error');
+    return;
+  }
+
+  const msg = document.getElementById('ind-msg')?.value.trim();
+
+  if(!msg){
+    toast('Escribe mensaje','error');
+    return;
+  }
+
+  const dateTime = prompt(
+    'Fecha y hora:\n\nFormato:\n2026-05-10 09:00:00'
+  );
+
+  if(!dateTime) return;
+
+  scheduleMessage(
+    c.phone,
+    personalize(msg,c),
+    dateTime
+  );
+}
+
 </script>
 </body>
 </html>
