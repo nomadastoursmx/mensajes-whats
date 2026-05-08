@@ -340,6 +340,17 @@ body{font-family:'DM Sans','Apple Color Emoji','Segoe UI Emoji','Noto Color Emoj
               <div class="sec-hd"><span class="sec-title">Opciones de cola</span></div>
               <div id="seq-queue-order" style="margin-bottom:10px;"></div>
               <div class="info-box"><i class="ti ti-info-circle"></i><span>Puedes arrastrar los contactos para reordenar la cola de envío antes de iniciar.</span></div>
+
+              <div class="divider"></div>
+              <div class="sec-hd"><span class="sec-title">Delay entre mensajes</span></div>
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                <input type="range" id="seq-delay-range" min="5" max="120" value="15"
+                  oninput="document.getElementById('seq-delay-val').textContent=this.value"
+                  style="flex:1;accent-color:var(--green);">
+                <span style="font-size:18px;font-weight:600;color:var(--green);min-width:36px;text-align:right;" id="seq-delay-val">15</span>
+                <span style="font-size:12px;color:var(--text2);">seg</span>
+              </div>
+              <div class="info-box" style="margin-top:0;"><i class="ti ti-robot"></i><span>La extension abrira cada chat automaticamente y esperara el delay antes del siguiente.</span></div>
             </div>
             <div>
               <div class="sec-hd"><span class="sec-title">Vista previa</span></div>
@@ -366,6 +377,12 @@ body{font-family:'DM Sans','Apple Color Emoji','Segoe UI Emoji','Noto Color Emoj
               <span class="prog-num"><span id="seq-done">0</span><span style="font-size:14px;color:var(--text2);font-weight:400;"> / </span><span id="seq-total">0</span></span>
             </div>
             <div class="prog-bar-bg"><div class="prog-bar" id="seq-bar" style="width:0%"></div></div>
+          </div>
+          <!-- Countdown delay -->
+          <div id="seq-countdown-wrap" style="display:none;text-align:center;padding:14px;background:rgba(37,211,102,.06);border:1px solid rgba(37,211,102,.2);border-radius:var(--radius);margin-bottom:14px;">
+            <div style="font-size:11px;color:var(--text2);margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em;">Siguiente mensaje en</div>
+            <div style="font-size:40px;font-weight:700;color:var(--green);font-family:'DM Mono',monospace;" id="seq-countdown-num">0</div>
+            <div style="font-size:12px;color:var(--text3);margin-top:4px;">segundos</div>
           </div>
           <div class="seq-layout">
             <div>
@@ -547,7 +564,33 @@ body{font-family:'DM Sans','Apple Color Emoji','Segoe UI Emoji','Noto Color Emoj
 
 <script>
 
-// Emoji constants (unicode codepoints - work in any browser/encoding)
+// ══════════════════════════════════════════
+//  ID DE TU EXTENSIÓN — cámbialo al tuyo
+//  chrome://extensions → WA Manager Bridge → copiar ID
+// ══════════════════════════════════════════
+const WA_EXTENSION_ID = 'cmanlmaehmiijndfflkllbhkmmaaleof';
+
+function openWhatsApp(phone, message=''){
+  const cleanPhone = String(phone).replace(/\D/g,'');
+  if(typeof chrome !== 'undefined' && chrome.runtime && WA_EXTENSION_ID !== 'PEGA_AQUI_EL_ID_DE_TU_EXTENSION'){
+    try {
+      chrome.runtime.sendMessage(WA_EXTENSION_ID,
+        { action:'sendWhatsApp', phone: cleanPhone, text: message },
+        (resp) => {
+          if(chrome.runtime.lastError || !resp?.ok) abrirPestana(cleanPhone, message);
+        }
+      );
+      return;
+    } catch(e){}
+  }
+  abrirPestana(cleanPhone, message);
+}
+
+function abrirPestana(cleanPhone, message){
+  const url = 'https://web.whatsapp.com/send?phone='+cleanPhone+'&text='+encodeURIComponent(message);
+  whatsappWindow = window.open(url, 'WhatsAppWindow');
+  if(whatsappWindow) whatsappWindow.focus();
+}
 const E = {
   wave: String.fromCodePoint(0x1F44B),   // 👋
   smile: String.fromCodePoint(0x1F60A),  // 😊
@@ -689,7 +732,7 @@ function insertVar(targetId,v){
 
 function openWhatsApp(phone, message=''){
 
-  const cleanPhone = String(phone).replace(/\D/g,'');
+  const cleanPhone = String(phone).replace(/\\D/g,'');
 
   const url =
     'https://web.whatsapp.com/send?phone=' +
@@ -697,13 +740,32 @@ function openWhatsApp(phone, message=''){
     '&text=' +
     encodeURIComponent(message);
 
-  // Siempre abre con la URL directamente y el mismo nombre de ventana.
-  // El navegador reutiliza la pestaña si ya existe con ese nombre,
-  // sin importar si la variable whatsappWindow se perdió al recargar.
-  whatsappWindow = window.open(url, 'WhatsAppWindow');
+  try {
 
-  if(whatsappWindow){
-    whatsappWindow.focus();
+      // reutilizar misma ventana
+      if(whatsappWindow && !whatsappWindow.closed){
+
+          whatsappWindow.location.replace(url);
+          whatsappWindow.focus();
+
+      } else {
+
+          // crear solo una ventana reutilizable
+          whatsappWindow = window.open(
+              '',
+              'WhatsAppWindow'
+          );
+
+          whatsappWindow.location.replace(url);
+          whatsappWindow.focus();
+      }
+
+  } catch(e){
+
+      whatsappWindow = window.open(
+          url,
+          'WhatsAppWindow'
+      );
   }
 }
 
@@ -948,6 +1010,90 @@ function startSeq(){
   if(!seqTplId){toast('Selecciona una plantilla primero','error');return;}
   const list=dragOrder.length?[...dragOrder]:[...seqSelIds].map(id=>contacts.find(c=>c.id===id)).filter(Boolean);
   if(!list.length){toast('Selecciona al menos un contacto','error');return;}
+
+  const delay = parseInt(document.getElementById('seq-delay-range')?.value || 15);
+
+  // Intentar usar la extensión para el modo automático con delay
+  if(typeof chrome !== 'undefined' && chrome.runtime && WA_EXTENSION_ID !== 'PEGA_AQUI_EL_ID_DE_TU_EXTENSION'){
+    const queue = list.map(c => {
+      const t = templates.find(x=>x.id===seqTplId);
+      return { name: c.name, phone: c.phone, text: t ? personalize(t.body,c) : '' };
+    });
+
+    // Conectar puerto para recibir progreso en tiempo real
+    try {
+      const port = chrome.runtime.connect(WA_EXTENSION_ID);
+      port.onMessage.addListener((msg) => {
+        if(msg.event === 'progress'){
+          const done = list.length - msg.remaining - 1;
+          document.getElementById('seq-done').textContent = Math.max(0, done);
+          document.getElementById('seq-bar').style.width = ((Math.max(0,done)/list.length)*100)+'%';
+          document.getElementById('seq-countdown-wrap').style.display='none';
+          toast('Abriendo chat: '+msg.name);
+        }
+        if(msg.event === 'countdown'){
+          document.getElementById('seq-countdown-wrap').style.display='block';
+          document.getElementById('seq-countdown-num').textContent = msg.seconds;
+        }
+        if(msg.event === 'ready'){
+          // Registrar en historial cuando la extensión abre el chat
+          const c = list.find(x=>x.phone===msg.phone);
+          const t = templates.find(x=>x.id===seqTplId);
+          if(c && t){ addHistory(c, t.body, personalize(t.body,c), 'secuencial-auto'); totalSent++; updateBadges(); persist(); }
+        }
+        if(msg.event === 'done'){
+          document.getElementById('seq-countdown-wrap').style.display='none';
+          document.getElementById('seq-done').textContent = list.length;
+          document.getElementById('seq-bar').style.width='100%';
+          seqLogs = list.map(c=>({name:c.name,sent:true}));
+          seqFinish();
+          toast('Secuencial completado');
+        }
+      });
+
+      chrome.runtime.sendMessage(WA_EXTENSION_ID,
+        { action:'startQueue', queue, delay },
+        (resp) => {
+          if(resp?.ok){
+            // Modo automático con extensión
+            seqQueue=[...list]; seqIdx=0; seqLogs=[]; seqActive=true;
+            document.getElementById('seq-setup').style.display='none';
+            document.getElementById('seq-active').style.display='block';
+            document.getElementById('seq-finish').style.display='none';
+            document.getElementById('seq-total').textContent=list.length;
+            document.getElementById('seq-cur-card').innerHTML=`
+              <div class="seq-card" style="text-align:center;padding:20px;">
+                <i class="ti ti-robot" style="font-size:36px;color:var(--green);display:block;margin-bottom:8px;"></i>
+                <div style="font-size:14px;font-weight:600;margin-bottom:4px;">Modo automático activo</div>
+                <div style="font-size:12px;color:var(--text2);">La extensión está abriendo los chats con delay de ${delay}s entre cada uno.</div>
+                <button class="btn btn-danger btn-sm" style="margin-top:14px;" onclick="cancelSeqAuto()"><i class="ti ti-player-stop"></i> Cancelar</button>
+              </div>`;
+            toast('Secuencial automático iniciado');
+          } else {
+            toast('Extensión no disponible, usando modo manual','error');
+            startSeqManual(list);
+          }
+        }
+      );
+      return;
+    } catch(e) {}
+  }
+
+  // Sin extensión: modo manual original
+  startSeqManual(list);
+}
+
+function cancelSeqAuto(){
+  if(typeof chrome !== 'undefined' && chrome.runtime){
+    chrome.runtime.sendMessage(WA_EXTENSION_ID, {action:'cancelQueue'}, ()=>{});
+  }
+  seqActive=false;
+  document.getElementById('seq-setup').style.display='block';
+  document.getElementById('seq-active').style.display='none';
+  toast('Secuencial cancelado');
+}
+
+function startSeqManual(list){
   seqQueue=[...list];seqIdx=0;seqLogs=[];seqActive=true;seqWaitingConfirm=false;
   document.getElementById('seq-setup').style.display='none';
   document.getElementById('seq-active').style.display='block';
